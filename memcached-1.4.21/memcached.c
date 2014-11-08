@@ -4695,6 +4695,7 @@ static int server_socket_unix(const char *path, int access_mask) {
 volatile rel_time_t current_time;
 static struct event clockevent;
 
+//更新memcached的当前时间set_current_time()
 /* libevent uses a monotonic clock when available for event scheduling. Aside
  * from jitter, simply ticking our internal timer here is accurate enough.
  * Note that users who are setting explicit dates for expiration times *must*
@@ -5590,6 +5591,7 @@ int main (int argc, char **argv) {
 	//slab 初始化，这个比较重要，要仔细分析
     slabs_init(settings.maxbytes, settings.factor, preallocate);
 
+	//忽略ＳＩＧＰＩＰＥ
     /*
      * ignore SIGPIPE signals; we can use errno == EPIPE if we
      * need that information
@@ -5598,24 +5600,34 @@ int main (int argc, char **argv) {
         perror("failed to ignore SIGPIPE; sigaction");
         exit(EX_OSERR);
     }
+
+	//worker thread 的初始化
     /* start up worker threads if MT mode */
     thread_init(settings.num_threads, main_base);
 
+	//建hashtable维护线程 
     if (start_assoc_maintenance_thread() == -1) {
         exit(EXIT_FAILURE);
     }
 
+	//根据启动参数决定是否启动内存模块的管理线程，主要是考虑数据存储的value
+	//值比较极端的情况，例如可能某一种chunck分配之后很久没有被访问，
+	//而其他经常被访问的则申请存储不成功，
+	//根据LRU算法策略可考虑将最近最少访问的内存块重新划分,
+	//slab_maintenance_thread主要做这些工作
     if (settings.slab_reassign &&
         start_slab_maintenance_thread() == -1) {
         exit(EXIT_FAILURE);
     }
 
+	//初始化item爬虫
     /* Run regardless of initializing it later */
     init_lru_crawler();
 
     /* initialise clock event */
     clock_handler(0, 0, 0);
 
+	//unix 域 socket
     /* create unix mode sockets after dropping privileges */
     if (settings.socketpath != NULL) {
         errno = 0;
@@ -5625,6 +5637,7 @@ int main (int argc, char **argv) {
         }
     }
 
+	//socket系列 let go
     /* create the listening socket, bind it, and init */
     if (settings.socketpath == NULL) {
         const char *portnumber_filename = getenv("MEMCACHED_PORT_FILENAME");

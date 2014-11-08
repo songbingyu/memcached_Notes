@@ -300,6 +300,7 @@ static void cqi_free(CQ_ITEM *item) {
 /*
  * Creates a worker thread.
  */
+//创建一个线程
 static void create_worker(void *(*func)(void *), void *arg) {
     pthread_t       thread;
     pthread_attr_t  attr;
@@ -328,34 +329,41 @@ void accept_new_conns(const bool do_accept) {
  * Set up a thread's information.
  */
 static void setup_thread(LIBEVENT_THREAD *me) {
+	//创建EventBase
     me->base = event_init();
     if (! me->base) {
         fprintf(stderr, "Can't allocate event base\n");
         exit(1);
     }
 
+	//创建管道读的libevent事件
     /* Listen for notifications from other threads */
     event_set(&me->notify_event, me->notify_receive_fd,
               EV_READ | EV_PERSIST, thread_libevent_process, me);
     event_base_set(me->base, &me->notify_event);
-
+	//添加事件到libevent中
     if (event_add(&me->notify_event, 0) == -1) {
         fprintf(stderr, "Can't monitor libevent notify pipe\n");
         exit(1);
     }
 
+	//创建消息队列，用于接受主线程连接  
     me->new_conn_queue = malloc(sizeof(struct conn_queue));
     if (me->new_conn_queue == NULL) {
         perror("Failed to allocate memory for connection queue");
         exit(EXIT_FAILURE);
     }
+	//消息队列初始化
     cq_init(me->new_conn_queue);
 
+	//初始化线程统计锁
     if (pthread_mutex_init(&me->stats.mutex, NULL) != 0) {
         perror("Failed to initialize mutex");
         exit(EXIT_FAILURE);
     }
 
+	//创建线程的后缀cache http://blog.chinaunix.net/uid-28345378-id-4237880.html 
+	//TODO:
     me->suffix_cache = cache_create("suffix", SUFFIX_SIZE, sizeof(char*),
                                     NULL, NULL);
     if (me->suffix_cache == NULL) {
@@ -782,6 +790,7 @@ void thread_init(int nthreads, struct event_base *main_base) {
     int         i;
     int         power;
 
+	//初始化各种锁和条件变量
     pthread_mutex_init(&cache_lock, NULL);
     pthread_mutex_init(&stats_lock, NULL);
 
@@ -791,6 +800,7 @@ void thread_init(int nthreads, struct event_base *main_base) {
     pthread_mutex_init(&cqi_freelist_lock, NULL);
     cqi_freelist = NULL;
 
+	//Memcached对hash桶的锁采用分段锁，按线程个数来分段，默认总共是1<<16个hash桶，而锁的数目是1<<power个   
     /* Want a wide lock table, but don't waste memory */
     if (nthreads < 3) {
         power = 10;
@@ -803,29 +813,41 @@ void thread_init(int nthreads, struct event_base *main_base) {
         power = 13;
     }
 
-    item_lock_count = hashsize(power);
-    item_lock_hashpower = power;
 
+    item_lock_count = hashsize(power);
+
+    item_lock_hashpower = power;
+	//申请 1<<power 个锁
     item_locks = calloc(item_lock_count, sizeof(pthread_mutex_t));
     if (! item_locks) {
         perror("Can't allocate item locks");
         exit(1);
     }
+	//初始化指定的锁
     for (i = 0; i < item_lock_count; i++) {
         pthread_mutex_init(&item_locks[i], NULL);
     }
+
+	//线程局部存储 见 http://blog.csdn.net/denny_233/article/details/7221831
+	//创建线程的局部变量，该局部变量的名称为item_lock_type_key,用于保存主hash表所持有的锁的类型
+	//主hash表在进行扩容时，该锁类型会变为全局的锁，否则(不在扩容过程中)，则是局部锁
     pthread_key_create(&item_lock_type_key, NULL);
     pthread_mutex_init(&item_global_lock, NULL);
 
+	//libevent的封装
     threads = calloc(nthreads, sizeof(LIBEVENT_THREAD));
     if (! threads) {
         perror("Can't allocate thread descriptors");
         exit(1);
     }
 
+	/*分发线程的初始化,分发线程的base为main_base
+	线程id为main线程的线程id*/
+
     dispatcher_thread.base = main_base;
     dispatcher_thread.thread_id = pthread_self();
 
+	//工作线程的初始化,工作线程和主线程(main线程)是通过pipe管道进行通信的  
     for (i = 0; i < nthreads; i++) {
         int fds[2];
         if (pipe(fds)) {
@@ -835,16 +857,19 @@ void thread_init(int nthreads, struct event_base *main_base) {
 
         threads[i].notify_receive_fd = fds[0];
         threads[i].notify_send_fd = fds[1];
-
+		//添加工作线程到libevent
         setup_thread(&threads[i]);
         /* Reserve three fds for the libevent base, and two for the pipe */
         stats.reserved_fds += 5;
     }
 
+	//创建线程
     /* Create threads after we've done all the libevent setup. */
     for (i = 0; i < nthreads; i++) {
         create_worker(worker_libevent, &threads[i]);
     }
+
+	//等待所有工作线程创建完毕  
 
     /* Wait for all the threads to set themselves up before returning. */
     pthread_mutex_lock(&init_lock);

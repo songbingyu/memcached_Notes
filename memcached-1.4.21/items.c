@@ -958,6 +958,7 @@ enum crawler_result_type lru_crawler_crawl(char *slabs) {
     return CRAWLER_OK;
 }
 
+//主要是锁的初始化
 int init_lru_crawler(void) {
     if (lru_crawler_initialized == 0) {
         if (pthread_cond_init(&lru_crawler_cond, NULL) != 0) {
