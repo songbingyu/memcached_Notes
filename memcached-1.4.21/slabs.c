@@ -76,7 +76,7 @@ static void slabs_preallocate (const unsigned int maxslabs);
  * Given object size, return id to use when allocating/freeing memory for object
  * 0 means error: can't store such a large object
  */
-
+// 根据size 选择合适的slabclass
 unsigned int slabs_clsid(const size_t size) {
     int res = POWER_SMALLEST;
 

@@ -61,6 +61,7 @@ bool safe_strtoul(const char *str, uint32_t *out) {
     *out = 0;
     errno = 0;
 
+	//将字符串转换成无符号长整型数
     l = strtoul(str, &endptr, 10);
     if ((errno == ERANGE) || (str == endptr)) {
         return false;
@@ -82,6 +83,7 @@ bool safe_strtoul(const char *str, uint32_t *out) {
     return false;
 }
 
+//strtol函数会将参数nptr字符串根据参数base来转换成长整型数。
 bool safe_strtol(const char *str, int32_t *out) {
     assert(out != NULL);
     errno = 0;

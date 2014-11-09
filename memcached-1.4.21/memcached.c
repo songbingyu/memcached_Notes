@@ -354,9 +354,12 @@ conn *conn_new(const int sfd, enum conn_states init_state,
     conn *c;
 
     assert(sfd >= 0 && sfd < max_fds);
+
+	//注意conns 的内存是在conn_init 里面初始化的
     c = conns[sfd];
 
     if (NULL == c) {
+		//改文件描述符还没有使用过
         if (!(c = (conn *)calloc(1, sizeof(conn)))) {
             STATS_LOCK();
             stats.malloc_fails++;
@@ -364,8 +367,9 @@ conn *conn_new(const int sfd, enum conn_states init_state,
             fprintf(stderr, "Failed to allocate connection object\n");
             return NULL;
         }
+		//探针，不用理会
         MEMCACHED_CONN_CREATE(c);
-
+		//下面就是各种初始化
         c->rbuf = c->wbuf = 0;
         c->ilist = 0;
         c->suffixlist = 0;
@@ -387,7 +391,7 @@ conn *conn_new(const int sfd, enum conn_states init_state,
         c->suffixlist = (char **)malloc(sizeof(char *) * c->suffixsize);
         c->iov = (struct iovec *)malloc(sizeof(struct iovec) * c->iovsize);
         c->msglist = (struct msghdr *)malloc(sizeof(struct msghdr) * c->msgsize);
-
+		//分配失败判断
         if (c->rbuf == 0 || c->wbuf == 0 || c->ilist == 0 || c->iov == 0 ||
                 c->msglist == 0 || c->suffixlist == 0) {
             conn_free(c);
@@ -467,7 +471,7 @@ conn *conn_new(const int sfd, enum conn_states init_state,
     c->item = 0;
 
     c->noreply = false;
-
+	//建立sfd描述符上面的event事件，事件回调函数为event_handler  
     event_set(&c->event, sfd, event_flags, event_handler, (void *)c);
     event_base_set(base, &c->event);
     c->ev_flags = event_flags;
@@ -537,6 +541,7 @@ static void conn_cleanup(conn *c) {
 /*
  * Frees a connection.
  */
+//这里没啥可说
 void conn_free(conn *c) {
     if (c) {
         assert(c != NULL);
@@ -3042,9 +3047,9 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
     item *it;
 
     assert(c != NULL);
-
+	//是否应答
     set_noreply_maybe(c, tokens, ntokens);
-
+	//命令不对
     if (tokens[KEY_TOKEN].length > KEY_MAX_LENGTH) {
         out_string(c, "CLIENT_ERROR bad command line format");
         return;
@@ -3645,11 +3650,13 @@ static void process_command(conn *c, char *command) {
 /*
  * if we have a complete line in the buffer, process it.
  */
+//begin 开始解析命令啦。。。。
 static int try_read_command(conn *c) {
     assert(c != NULL);
     assert(c->rcurr <= (c->rbuf + c->rsize));
     assert(c->rbytes > 0);
 
+	//判断协议
     if (c->protocol == negotiating_prot || c->transport == udp_transport)  {
         if ((unsigned char)c->rbuf[0] == (unsigned char)PROTOCOL_BINARY_REQ) {
             c->protocol = binary_prot;
@@ -3662,7 +3669,7 @@ static int try_read_command(conn *c) {
                     prot_text(c->protocol));
         }
     }
-
+	//二进制协议
     if (c->protocol == binary_prot) {
         /* Do we have the complete packet header? */
         if (c->rbytes < sizeof(c->binary_header)) {
@@ -3679,9 +3686,10 @@ static int try_read_command(conn *c) {
                 }
             }
 #endif
-            protocol_binary_request_header* req;
+            //协议头
+			protocol_binary_request_header* req;
             req = (protocol_binary_request_header*)c->rcurr;
-
+			//打印
             if (settings.verbose > 1) {
                 /* Dump the packet before we convert it to host order */
                 int ii;
@@ -3694,12 +3702,12 @@ static int try_read_command(conn *c) {
                 }
                 fprintf(stderr, "\n");
             }
-
+			//各种读取
             c->binary_header = *req;
             c->binary_header.request.keylen = ntohs(req->request.keylen);
             c->binary_header.request.bodylen = ntohl(req->request.bodylen);
             c->binary_header.request.cas = ntohll(req->request.cas);
-
+			//magin 非法的连接
             if (c->binary_header.request.magic != PROTOCOL_BINARY_REQ) {
                 if (settings.verbose) {
                     fprintf(stderr, "Invalid magic:  %x\n",
@@ -3833,6 +3841,7 @@ static enum try_read_result try_read_network(conn *c) {
     int num_allocs = 0;
     assert(c != NULL);
 
+	//移动内存到数组头
     if (c->rcurr != c->rbuf) {
         if (c->rbytes != 0) /* otherwise there's nothing to copy */
             memmove(c->rbuf, c->rcurr, c->rbytes);
@@ -3840,6 +3849,7 @@ static enum try_read_result try_read_network(conn *c) {
     }
 
     while (1) {
+		//擦，readbuf不够了，分配点，最多分配四次
         if (c->rbytes >= c->rsize) {
             if (num_allocs == 4) {
                 return gotdata;
@@ -3876,10 +3886,13 @@ static enum try_read_result try_read_network(conn *c) {
                 break;
             }
         }
+		//close 
         if (res == 0) {
             return READ_ERROR;
         }
+		//error 
         if (res == -1) {
+			//这两个不算错误
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;
             }
@@ -3889,12 +3902,14 @@ static enum try_read_result try_read_network(conn *c) {
     return gotdata;
 }
 
+//修改监听的事件
 static bool update_event(conn *c, const int new_flags) {
     assert(c != NULL);
 
     struct event_base *base = c->event.ev_base;
     if (c->ev_flags == new_flags)
         return true;
+	//先删除 在设置
     if (event_del(&c->event) == -1) return false;
     event_set(&c->event, c->sfd, new_flags, event_handler, (void *)c);
     event_base_set(base, &c->event);
@@ -3908,7 +3923,8 @@ static bool update_event(conn *c, const int new_flags) {
  */
 void do_accept_new_conns(const bool do_accept) {
     conn *next;
-
+	//在已经处于监听状态的套接口上再次调用listen()函数，
+	//可以修改其配置信息，如backlog
     for (next = listen_conn; next; next = next->next) {
         if (do_accept) {
             update_event(next, EV_READ | EV_PERSIST);
@@ -4005,6 +4021,7 @@ static enum transmit_result transmit(conn *c) {
     }
 }
 
+// 状态机
 static void drive_machine(conn *c) {
     bool stop = false;
     int sfd;
@@ -4026,6 +4043,7 @@ static void drive_machine(conn *c) {
         switch(c->state) {
         case conn_listening:
             addrlen = sizeof(addr);
+			// acceptor
 #ifdef HAVE_ACCEPT4
             if (use_accept4) {
                 sfd = accept4(c->sfd, (struct sockaddr *)&addr, &addrlen, SOCK_NONBLOCK);
@@ -4034,8 +4052,10 @@ static void drive_machine(conn *c) {
             }
 #else
             sfd = accept(c->sfd, (struct sockaddr *)&addr, &addrlen);
-#endif
-            if (sfd == -1) {
+#endif		
+            //socket accept 错误处理
+			if (sfd == -1) {
+				//系统不支持
                 if (use_accept4 && errno == ENOSYS) {
                     use_accept4 = 0;
                     continue;
@@ -4047,6 +4067,11 @@ static void drive_machine(conn *c) {
                 } else if (errno == EMFILE) {
                     if (settings.verbose > 0)
                         fprintf(stderr, "Too many open connections\n");
+					//错误若是EMFILE，说明此时系统中建立的连接数量太多而无法继续建立连接了，
+					//那么就需要通过accept_new_conns()->do_accept_new_conns()调用listen()函数，
+					//将backlog设置成零（注意，在已经处于监听状态的套接口上再次调用listen()函数，
+					//可以修改其配置信息，如backlog），
+					//借此来通知系统不再继续接收新的链接了。同时也会立即结束本次处理，而将控制返还到libevent中。
                     accept_new_conns(false);
                     stop = true;
                 } else {
@@ -4055,6 +4080,7 @@ static void drive_machine(conn *c) {
                 }
                 break;
             }
+			// 不支持Accept 返回设置非阻塞
             if (!use_accept4) {
                 if (fcntl(sfd, F_SETFL, fcntl(sfd, F_GETFL) | O_NONBLOCK) < 0) {
                     perror("setting O_NONBLOCK");
@@ -4062,7 +4088,7 @@ static void drive_machine(conn *c) {
                     break;
                 }
             }
-
+			//打到最大连接数
             if (settings.maxconns_fast &&
                 stats.curr_conns + stats.reserved_fds >= settings.maxconns - 1) {
                 str = "ERROR Too many open connections\r\n";
@@ -4072,6 +4098,7 @@ static void drive_machine(conn *c) {
                 stats.rejected_conns++;
                 STATS_UNLOCK();
             } else {
+				//分配新的连接到worker
                 dispatch_conn_new(sfd, conn_new_cmd, EV_READ | EV_PERSIST,
                                      DATA_BUFFER_SIZE, tcp_transport);
             }
@@ -4079,6 +4106,7 @@ static void drive_machine(conn *c) {
             stop = true;
             break;
 
+		//等待接受数据，把对应的 ＥＶＥＮＴ　设置成可读
         case conn_waiting:
             if (!update_event(c, EV_READ | EV_PERSIST)) {
                 if (settings.verbose > 0)
@@ -4340,6 +4368,7 @@ static void drive_machine(conn *c) {
     return;
 }
 
+//事件处理 conn_new 
 void event_handler(const int fd, const short which, void *arg) {
     conn *c;
 
@@ -4362,6 +4391,7 @@ void event_handler(const int fd, const short which, void *arg) {
     return;
 }
 
+//创建非阻塞socket
 static int new_socket(struct addrinfo *ai) {
     int sfd;
     int flags;
@@ -4423,6 +4453,7 @@ static void maximize_sndbuf(const int sfd) {
  *        when they are successfully added to the list of ports we
  *        listen on.
  */
+//参考：http://blog.csdn.net/lcli2009/article/details/21609871
 static int server_socket(const char *interface,
                          int port,
                          enum network_transport transport,
@@ -4433,17 +4464,22 @@ static int server_socket(const char *interface,
     struct addrinfo *next;
     struct addrinfo hints = { .ai_flags = AI_PASSIVE,
                               .ai_family = AF_UNSPEC };
+
+
     char port_buf[NI_MAXSERV];
     int error;
     int success = 0;
     int flags =1;
 
+	//指定socket的类型，如果是udp，则用数据报协议，如果是tcp,则用数据流协议  
     hints.ai_socktype = IS_UDP(transport) ? SOCK_DGRAM : SOCK_STREAM;
 
     if (port == -1) {
         port = 0;
     }
     snprintf(port_buf, sizeof(port_buf), "%d", port);
+	//调用getaddrinfo, 将主机地址和端口号映射成为socket地址信息，地址信息由ai带回
+	// 参考 http://www.cnblogs.com/cxz2009/archive/2010/11/19/1881693.html
     error= getaddrinfo(interface, port_buf, &hints, &ai);
     if (error != 0) {
         if (error != EAI_SYSTEM)
@@ -4453,12 +4489,17 @@ static int server_socket(const char *interface,
         return 1;
     }
 
+	/*getaddrinfo返回多个addrinfo的情形有如下两种：
+	1.如果与interface参数关联的地址有多个，那么适用于所请求地址簇的每个地址都返回一个对应的结构。
+	2.如果port_buf参数指定的服务支持多个套接口类型，那么每个套接口类型都可能返回一个对应的结构。
+	*/
     for (next= ai; next; next= next->ai_next) {
         conn *listen_conn_add;
         if ((sfd = new_socket(next)) == -1) {
             /* getaddrinfo can return "junk" addresses,
              * we make sure at least one works before erroring.
              */
+			//#define    EMFILE         24        /* Too many open files */
             if (errno == EMFILE) {
                 /* ...unless we're out of fds */
                 perror("server_socket");
@@ -4469,6 +4510,8 @@ static int server_socket(const char *interface,
 
 #ifdef IPV6_V6ONLY
         if (next->ai_family == AF_INET6) {
+			//设定IPV6的选项值，设置了IPV6_V6ONLY，表示只收发IPV6的数据包，
+			//此时IPV4和IPV6可以绑定到同一个端口而不影响数据的收发  
             error = setsockopt(sfd, IPPROTO_IPV6, IPV6_V6ONLY, (char *) &flags, sizeof(flags));
             if (error != 0) {
                 perror("setsockopt");
@@ -4477,24 +4520,29 @@ static int server_socket(const char *interface,
             }
         }
 #endif
-
+		//设定socket选项，SO_REUSEADDR表示重用地址信息，
+		//必须在bind操作之前设置
+		//http://baike.baidu.com/view/7994791.htm
         setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (void *)&flags, sizeof(flags));
         if (IS_UDP(transport)) {
+			//UDP 协议扩大发送缓冲区  
             maximize_sndbuf(sfd);
         } else {
+			//SO_KEEPALIVE表示保活  
             error = setsockopt(sfd, SOL_SOCKET, SO_KEEPALIVE, (void *)&flags, sizeof(flags));
             if (error != 0)
                 perror("setsockopt");
-
+			//SO_LINGER表示执行close操作时，如果缓冲区还有数据，可以继续发送 
             error = setsockopt(sfd, SOL_SOCKET, SO_LINGER, (void *)&ling, sizeof(ling));
             if (error != 0)
                 perror("setsockopt");
-
+			//设定IP选项，TCP_NODELAY表示禁用Nagle算法 
             error = setsockopt(sfd, IPPROTO_TCP, TCP_NODELAY, (void *)&flags, sizeof(flags));
             if (error != 0)
                 perror("setsockopt");
         }
 
+		//绑定
         if (bind(sfd, next->ai_addr, next->ai_addrlen) == -1) {
             if (errno != EADDRINUSE) {
                 perror("bind()");
@@ -4506,12 +4554,14 @@ static int server_socket(const char *interface,
             continue;
         } else {
             success++;
+			//如果不是UDP协议，则执行监听操作，监听队列为初始启动的值  
             if (!IS_UDP(transport) && listen(sfd, settings.backlog) == -1) {
                 perror("listen()");
                 close(sfd);
                 freeaddrinfo(ai);
                 return 1;
             }
+			//打印信息
             if (portnumber_file != NULL &&
                 (next->ai_addr->sa_family == AF_INET ||
                  next->ai_addr->sa_family == AF_INET6)) {
@@ -4546,18 +4596,21 @@ static int server_socket(const char *interface,
                  * among threads, so this is guaranteed to assign one
                  * FD to each thread.
                  */
+				//分发连接，因为UDP没有连接建立的过程，直接进行连接的分发 
                 int per_thread_fd = c ? dup(sfd) : sfd;
                 dispatch_conn_new(per_thread_fd, conn_read,
                                   EV_READ | EV_PERSIST,
                                   UDP_READ_BUFFER_SIZE, transport);
             }
         } else {
+			//TCP,建立连接  
             if (!(listen_conn_add = conn_new(sfd, conn_listening,
                                              EV_READ | EV_PERSIST, 1,
                                              transport, main_base))) {
                 fprintf(stderr, "failed to create listening connection\n");
                 exit(EXIT_FAILURE);
             }
+			//加入链表
             listen_conn_add->next = listen_conn;
             listen_conn = listen_conn_add;
         }
@@ -4569,9 +4622,11 @@ static int server_socket(const char *interface,
     return success == 0;
 }
 
+// listen bind 系列 默认bing 0.0.0.0 就可以了擦
 static int server_sockets(int port, enum network_transport transport,
                           FILE *portnumber_file) {
-    if (settings.inter == NULL) {
+    //默认用他就行了
+	if (settings.inter == NULL) {
         return server_socket(settings.inter, port, transport, portnumber_file);
     } else {
         // tokenize them and bind to each one of them..
@@ -4583,6 +4638,7 @@ static int server_sockets(int port, enum network_transport transport,
             fprintf(stderr, "Failed to allocate memory for parsing server interface string\n");
             return 1;
         }
+		//字符串分割style
         for (char *p = strtok_r(list, ";,", &b);
              p != NULL;
              p = strtok_r(NULL, ";,", &b)) {
@@ -5203,7 +5259,7 @@ int main (int argc, char **argv) {
         case 'v':
             settings.verbose++;
             break;
-        case 'l':
+        case 'l'://监听的主机地址，默认是INADDR_ANY，即所有地址，<addr>可以是host:port的形式，如果没有指定port，则使用-p或者-U的值；可以指定多个地址，以逗号分隔或者多次使用-l参数；尽量不要使用默认值，有安全隐患。
             if (settings.inter != NULL) {
                 size_t len = strlen(settings.inter) + strlen(optarg) + 2;
                 char *p = malloc(len);
@@ -5637,7 +5693,7 @@ int main (int argc, char **argv) {
         }
     }
 
-	//socket系列 let go
+	//socket系列 let go 感觉没必要搞这吗复杂。。。
     /* create the listening socket, bind it, and init */
     if (settings.socketpath == NULL) {
         const char *portnumber_filename = getenv("MEMCACHED_PORT_FILENAME");
@@ -5683,11 +5739,12 @@ int main (int argc, char **argv) {
             rename(temp_portnumber_filename, portnumber_filename);
         }
     }
-
+	//为啥睡这么长时间？
     /* Give the sockets a moment to open. I know this is dumb, but the error
      * is only an advisory.
      */
     usleep(1000);
+
     if (stats.curr_conns + stats.reserved_fds >= settings.maxconns - 1) {
         fprintf(stderr, "Maxconns setting is too low, use -c to increase.\n");
         exit(EXIT_FAILURE);
@@ -5700,6 +5757,7 @@ int main (int argc, char **argv) {
     /* Drop privileges no longer needed */
     drop_privileges();
 
+	//开始事件循环
     /* enter the event loop */
     if (event_base_loop(main_base, 0) != 0) {
         retval = EXIT_FAILURE;
@@ -5707,6 +5765,7 @@ int main (int argc, char **argv) {
 
     stop_assoc_maintenance_thread();
 
+	// clear 扫外
     /* remove the PID file if we're a daemon */
     if (do_daemonize)
         remove_pidfile(pid_file);

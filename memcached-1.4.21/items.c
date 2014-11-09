@@ -88,6 +88,8 @@ static size_t item_make_header(const uint8_t nkey, const int flags, const int nb
 }
 
 /*@null@*/
+//分配一个指定大小的item 执行item的存储操作,该操作会将item挂载到LRU表和slabcalss中
+//参考 http://blog.csdn.net/lcli2009/article/details/22091167
 item *do_item_alloc(char *key, const size_t nkey, const int flags,
                     const rel_time_t exptime, const int nbytes,
                     const uint32_t cur_hv) {
@@ -95,15 +97,18 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
     item *it = NULL;
     char suffix[40];
     size_t ntotal = item_make_header(nkey + 1, flags, nbytes, suffix, &nsuffix);
+	//如果使用了CAS 增加空间
     if (settings.use_cas) {
         ntotal += sizeof(uint64_t);
     }
-
+	//选择合适的slab
     unsigned int id = slabs_clsid(ntotal);
     if (id == 0)
         return 0;
 
+	//执行LRU锁  
     mutex_lock(&cache_lock);
+	//存储时，会尝试从LRU中选择合适的空间的空间  
     /* do a quick check if we have any expired items in the tail.. */
     int tries = 5;
     /* Avoid hangs if a slab has nothing but refcounted stuff in it. */

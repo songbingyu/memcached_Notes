@@ -232,6 +232,7 @@ static CQ_ITEM *cq_pop(CQ *cq) {
 /*
  * Adds an item to a connection queue.
  */
+//加入到里面，加锁
 static void cq_push(CQ *cq, CQ_ITEM *item) {
     item->next = NULL;
 
@@ -247,6 +248,7 @@ static void cq_push(CQ *cq, CQ_ITEM *item) {
 /*
  * Returns a fresh connection queue item.
  */
+// 首先判断freelist 不行就new
 static CQ_ITEM *cqi_new(void) {
     CQ_ITEM *item = NULL;
     pthread_mutex_lock(&cqi_freelist_lock);
@@ -258,7 +260,7 @@ static CQ_ITEM *cqi_new(void) {
 
     if (NULL == item) {
         int i;
-
+		//每次分配 ITEMS_PER_ALLOC=64 个， 第一个 返回，剩下的 插入到freelist 头部
         /* Allocate a bunch of items at once to reduce fragmentation */
         item = malloc(sizeof(CQ_ITEM) * ITEMS_PER_ALLOC);
         if (NULL == item) {
@@ -400,11 +402,13 @@ static void *worker_libevent(void *arg) {
  * Processes an incoming "handle a new connection" item. This is called when
  * input arrives on the libevent wakeup pipe.
  */
+//
 static void thread_libevent_process(int fd, short which, void *arg) {
     LIBEVENT_THREAD *me = arg;
     CQ_ITEM *item;
     char buf[1];
 
+	//读
     if (read(fd, buf, 1) != 1)
         if (settings.verbose > 0)
             fprintf(stderr, "Can't read from libevent pipe\n");
@@ -433,6 +437,7 @@ static void thread_libevent_process(int fd, short which, void *arg) {
         cqi_free(item);
     }
         break;
+	//TODO: 锁
     /* we were told to flip the lock type and report in */
     case 'l':
     me->item_lock_type = ITEM_LOCK_GRANULAR;
@@ -453,32 +458,38 @@ static int last_thread = -1;
  * from the main thread, either during initialization (for UDP) or because
  * of an incoming connection.
  */
+//分配新的连接到another 线程
 void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
                        int read_buffer_size, enum network_transport transport) {
     CQ_ITEM *item = cqi_new();
     char buf[1];
+	//分配失败
     if (item == NULL) {
         close(sfd);
         /* given that malloc failed this may also fail, but let's try */
         fprintf(stderr, "Failed to allocate memory for connection object\n");
         return ;
     }
-
+	//轮训方法
     int tid = (last_thread + 1) % settings.num_threads;
 
     LIBEVENT_THREAD *thread = threads + tid;
 
+	//记住最后一个
     last_thread = tid;
 
+	//初始化
     item->sfd = sfd;
     item->init_state = init_state;
     item->event_flags = event_flags;
     item->read_buffer_size = read_buffer_size;
     item->transport = transport;
 
+	//加入到对应线程的  new_conn_queue 里面
     cq_push(thread->new_conn_queue, item);
 
     MEMCACHED_CONN_DISPATCH(sfd, thread->thread_id);
+	//通知对应的线程
     buf[0] = 'c';
     if (write(thread->notify_send_fd, buf, 1) != 1) {
         perror("Writing to thread notify pipe");
