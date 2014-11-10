@@ -330,7 +330,19 @@ struct settings {
 extern struct stats stats;
 extern time_t process_started;
 extern struct settings settings;
+//ITEM_LINKED表示item处于hashtable和LRU队列中，分别在do_item_link
+//（将item放入hashtable和LRU队列）和do_item_unlink（将item从hashtable和LRU队列移除）
+//中设置和置位，后续的对it_flags &ITEM_LINKED的判断，
+//根据是否在hashtable和LRU队列中，从而能够进行或禁止某些操作，
+//如：如果item在hashtable和LRU队列，就不能执行free_item操作
+//(assert((it->it_flags & ITEM_LINKED) == 0)保证)，必须首先do_item_unlink。
 
+//Item_CAS是根据用户命令行参数决定的，CAS表示check and set，
+//只有cas字段一致时（check）才执行后续操作（set），否则操作失败。
+
+//ITEM_SLABBED，这个标志只有在item_free函数中，
+//slabs_free函数调用前设置，说明只有将其放入slabs对应的slabclass_t的freelist指针数组中时，
+//才设置此标志，即设置此标志的item应该为free状态，it_flags & ITEM_SLABBED即可以以此来理解。
 #define ITEM_LINKED 1
 #define ITEM_CAS 2
 
@@ -502,13 +514,13 @@ extern volatile rel_time_t current_time;
 extern volatile int slab_rebalance_signal;
 
 struct slab_rebalance {
-    void *slab_start;
-    void *slab_end;
-    void *slab_pos;
+	void *slab_start; // 待转移page的内存起始地址
+    void *slab_end;//page页的尾地址
+    void *slab_pos;//当前处理的item所在该page中的位置(从前向后处理)
     int s_clsid;
     int d_clsid;
-    int busy_items;
-    uint8_t done;
+    int busy_items;//busy item的数量（当前item被加锁，所以无法处理）
+    uint8_t done;//是否该页中chunk存储的item已经全部处理完毕(从hashtable中删除、从原slabclass中的回收链表中删除)
 };
 
 extern struct slab_rebalance slab_rebal;
