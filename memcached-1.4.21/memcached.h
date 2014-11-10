@@ -68,6 +68,7 @@
  * in this many seconds. That saves us from churning on frequently-accessed
  * items.
  */
+//队列刷新间隔
 #define ITEM_UPDATE_INTERVAL 60
 
 /* unistd.h is here */

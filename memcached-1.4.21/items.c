@@ -90,6 +90,7 @@ static size_t item_make_header(const uint8_t nkey, const int flags, const int nb
 /*@null@*/
 //分配一个指定大小的item 执行item的存储操作,该操作会将item挂载到LRU表和slabcalss中
 //参考 http://blog.csdn.net/lcli2009/article/details/22091167
+// http://blog.csdn.net/lcli2009/article/details/22095251
 item *do_item_alloc(char *key, const size_t nkey, const int flags,
                     const rel_time_t exptime, const int nbytes,
                     const uint32_t cur_hv) {
@@ -118,7 +119,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
     item *next_it;
     void *hold_lock = NULL;
     rel_time_t oldest_live = settings.oldest_live;
-
+	//heads和tails指针，分别指向最老的数据和最新的数据，这样便于LRU链表的操作
     search = tails[id];
     /* We walk up *only* for locked items. Never searching for expired.
      * Waste of CPU for almost all deployments */
@@ -135,9 +136,11 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
          * other callers can incr the refcount
          */
         /* Don't accidentally grab ourselves, or bail if we can't quicklock */
-        if (hv == cur_hv || (hold_lock = item_trylock(hv)) == NULL)
+		//尝试执行锁操作，这里执行的乐观锁
+		if (hv == cur_hv || (hold_lock = item_trylock(hv)) == NULL) 
             continue;
         /* Now see if the item is refcount locked */
+		//判断item是否被锁住，item的引用次数其实充当的也是一种锁 
         if (refcount_incr(&search->refcount) != 2) {
             /* Avoid pathological case with ref'ed items in tail */
             do_item_update_nolock(search);
@@ -274,7 +277,7 @@ bool item_size_ok(const size_t nkey, const int flags, const int nbytes) {
 
     return slabs_clsid(ntotal) != 0;
 }
-
+//将item加入到对应classid的LRU链的head，这里是item加入到LRU链表中  
 static void item_link_q(item *it) { /* item is the new head */
     item **head, **tail;
     assert(it->slabs_clsid < LARGEST_ID);
@@ -292,7 +295,7 @@ static void item_link_q(item *it) { /* item is the new head */
     sizes[it->slabs_clsid]++;
     return;
 }
-
+//将item从对应classid的LRU链上移除，这里是item从LRU链表中删除  
 static void item_unlink_q(item *it) {
     item **head, **tail;
     assert(it->slabs_clsid < LARGEST_ID);

@@ -3055,6 +3055,7 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
         return;
     }
 
+	//解析参数
     key = tokens[KEY_TOKEN].value;
     nkey = tokens[KEY_TOKEN].length;
 
@@ -3087,7 +3088,7 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
         out_string(c, "CLIENT_ERROR bad command line format");
         return;
     }
-
+	//统计信息
     if (settings.detail_enabled) {
         stats_prefix_record_set(key, nkey);
     }
