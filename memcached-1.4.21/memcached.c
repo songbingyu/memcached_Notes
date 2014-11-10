@@ -3093,8 +3093,9 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
         stats_prefix_record_set(key, nkey);
     }
 
+	//给item 分配内存
     it = item_alloc(key, nkey, flags, realtime(exptime), vlen);
-
+	//分配失败
     if (it == 0) {
         if (! item_size_ok(nkey, flags, vlen))
             out_string(c, "SERVER_ERROR object too large for cache");
@@ -3104,6 +3105,7 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
         c->write_and_go = conn_swallow;
         c->sbytes = vlen;
 
+		//避免使用陈旧的持久化缓存
         /* Avoid stale data persisting in cache because we failed alloc.
          * Unacceptable for SET. Anywhere else too? */
         if (comm == NREAD_SET) {

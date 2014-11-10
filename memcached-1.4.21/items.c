@@ -118,6 +118,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
     item *search;
     item *next_it;
     void *hold_lock = NULL;
+	//初始化时选择的过期时间  
     rel_time_t oldest_live = settings.oldest_live;
 	//heads和tails指针，分别指向最老的数据和最新的数据，这样便于LRU链表的操作
     search = tails[id];
@@ -141,6 +142,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
             continue;
         /* Now see if the item is refcount locked */
 		//判断item是否被锁住，item的引用次数其实充当的也是一种锁 
+		//这段代码其实是try 最多tries_lrutail_reflocked 1000 遍，看是不是能够获得锁
         if (refcount_incr(&search->refcount) != 2) {
             /* Avoid pathological case with ref'ed items in tail */
             do_item_update_nolock(search);
@@ -151,10 +153,12 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
             /* Old rare bug could cause a refcount leak. We haven't seen
              * it in years, but we leave this code in to prevent failures
              * just in case */
+			//如果it的添加时间比当前时间小于3*3600  
             if (settings.tail_repair_time &&
                     search->time + settings.tail_repair_time < current_time) {
                 itemstats[id].tailrepairs++;
                 search->refcount = 1;
+				// 执行分段解锁操作
                 do_item_unlink_nolock(search, hv);
             }
             if (hold_lock)
@@ -174,23 +178,28 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
                 itemstats[id].expired_unfetched++;
             }
             it = search;
+			//slabclass申请合适的空间
+			//其实只是slab已经分配的内存改变一下指针
             slabs_adjust_mem_requested(it->slabs_clsid, ITEM_ntotal(it), ntotal);
             do_item_unlink_nolock(it, hv);
             /* Initialize the item block: */
             it->slabs_clsid = 0;
         } else if ((it = slabs_alloc(ntotal, id)) == NULL) {
             tried_alloc = 1;
-            if (settings.evict_to_free == 0) {
+            if (settings.evict_to_free == 0) {// 关闭LRU
                 itemstats[id].outofmemory++;
             } else {
-                itemstats[id].evicted++;
-                itemstats[id].evicted_time = current_time - search->time;
+				//静态统计
+				itemstats[id].evicted++; //这个slab的分配失败次数加1，后面的分析统计信息的线程会用到这个统计信息
+                itemstats[id].evicted_time = current_time - search->time;//显示的统计信息
                 if (search->exptime != 0)
                     itemstats[id].evicted_nonzero++;
                 if ((search->it_flags & ITEM_FETCHED) == 0) {
                     itemstats[id].evicted_unfetched++;
                 }
                 it = search;
+				//slabclass申请合适的空间
+				//其实只是slab已经分配的内存改变一下指针
                 slabs_adjust_mem_requested(it->slabs_clsid, ITEM_ntotal(it), ntotal);
                 do_item_unlink_nolock(it, hv);
                 /* Initialize the item block: */
@@ -203,6 +212,9 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
                  * would be an eviction. Then kick off the slab mover before the
                  * eviction happens.
                  */
+				//激进模式
+				///可以看到如果slab_automove=2(默认是1)，这样会导致angry模式，
+				//就是只要分配失败了，马上就选择一个slab，把这个空间移动到当前slab-class中（不会有通过统计信息有选择的移动slab）
                 if (settings.slab_automove == 2)
                     slabs_reassign(-1, id);
             }
@@ -215,6 +227,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
         break;
     }
 
+	//此时还没找到对应的内存
     if (!tried_alloc && (tries == 0 || search == NULL))
         it = slabs_alloc(ntotal, id);
 
@@ -230,6 +243,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
     /* Item initialization can happen outside of the lock; the item's already
      * been removed from the slab LRU.
      */
+	//下面就是各种xxx赋值
     it->refcount = 1;     /* the caller will have a reference */
     mutex_unlock(&cache_lock);
     it->next = it->prev = it->h_next = 0;
@@ -247,17 +261,21 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
 }
 
 void item_free(item *it) {
+	// size
     size_t ntotal = ITEM_ntotal(it);
     unsigned int clsid;
+	//各种判断
     assert((it->it_flags & ITEM_LINKED) == 0);
     assert(it != heads[it->slabs_clsid]);
     assert(it != tails[it->slabs_clsid]);
+	//ref 0 
     assert(it->refcount == 0);
 
     /* so slab size changer can tell later if item is already free or not */
     clsid = it->slabs_clsid;
     it->slabs_clsid = 0;
     DEBUG_REFCNT(it, 'F');
+	//放到free list 里面
     slabs_free(it, ntotal, clsid);
 }
 
@@ -319,11 +337,17 @@ static void item_unlink_q(item *it) {
     return;
 }
 
+// 将item放入hashtable和LRU队列  
+//http://blog.csdn.net/tankles/article/details/7048483
 int do_item_link(item *it, const uint32_t hv) {
+
     MEMCACHED_ITEM_LINK(ITEM_key(it), it->nkey, it->nbytes);
+	//标志判断
     assert((it->it_flags & (ITEM_LINKED|ITEM_SLABBED)) == 0);
-    mutex_lock(&cache_lock);
+   //cache_lock主要用于保护hashtable 及其相关链表。
+	mutex_lock(&cache_lock);//http://www.fanzhihui.com/2012/04/memcache-sync/
     it->it_flags |= ITEM_LINKED;
+	// 最近访问时间为当前时间
     it->time = current_time;
 
     STATS_LOCK();
@@ -333,16 +357,23 @@ int do_item_link(item *it, const uint32_t hv) {
     STATS_UNLOCK();
 
     /* Allocate a new CAS ID on link. */
+	// 调用get_cas_id()给item的cas_id赋值
     ITEM_set_cas(it, (settings.use_cas) ? get_cas_id() : 0);
+	// 将item指针插入hash表中 
     assoc_insert(it, hv);
+	//加入ＬＲＵ
     item_link_q(it);
     refcount_incr(&it->refcount);
+
     mutex_unlock(&cache_lock);
 
     return 1;
 }
+// 从hashtable及LRU队列摘除item项 
+//http://blog.csdn.net/tankles/article/details/7048483
 
 void do_item_unlink(item *it, const uint32_t hv) {
+	
     MEMCACHED_ITEM_UNLINK(ITEM_key(it), it->nkey, it->nbytes);
     mutex_lock(&cache_lock);
     if ((it->it_flags & ITEM_LINKED) != 0) {
@@ -358,6 +389,7 @@ void do_item_unlink(item *it, const uint32_t hv) {
     mutex_unlock(&cache_lock);
 }
 
+// 从hashtable及LRU队列摘除item项 
 /* FIXME: Is it necessary to keep this copy/pasted code? */
 void do_item_unlink_nolock(item *it, const uint32_t hv) {
     MEMCACHED_ITEM_UNLINK(ITEM_key(it), it->nkey, it->nbytes);
@@ -372,12 +404,12 @@ void do_item_unlink_nolock(item *it, const uint32_t hv) {
         do_item_remove(it);
     }
 }
-
+// 引用计数为0的时候，就将其释放  
 void do_item_remove(item *it) {
     MEMCACHED_ITEM_REMOVE(ITEM_key(it), it->nkey, it->nbytes);
     assert((it->it_flags & ITEM_SLABBED) == 0);
     assert(it->refcount > 0);
-
+	//引用计数为0
     if (refcount_decr(&it->refcount) == 0) {
         item_free(it);
     }
@@ -385,6 +417,9 @@ void do_item_remove(item *it) {
 
 /* Copy/paste to avoid adding two extra branches for all common calls, since
  * _nolock is only used in an uncommon case. */
+// 更新item时间戳  
+// 先调用item_unlink_q(),更新了时间以后，再调用item_link_q(),  
+// 将其重新连接到LRU队列之中，即让该item移到LRU队列的最前
 void do_item_update_nolock(item *it) {
     MEMCACHED_ITEM_UPDATE(ITEM_key(it), it->nkey, it->nbytes);
     if (it->time < current_time - ITEM_UPDATE_INTERVAL) {
@@ -398,6 +433,9 @@ void do_item_update_nolock(item *it) {
     }
 }
 
+// 更新item时间戳  
+// 先调用item_unlink_q(),更新了时间以后，再调用item_link_q(),  
+// 将其重新连接到LRU队列之中，即让该item移到LRU队列的最前
 void do_item_update(item *it) {
     MEMCACHED_ITEM_UPDATE(ITEM_key(it), it->nkey, it->nbytes);
     if (it->time < current_time - ITEM_UPDATE_INTERVAL) {
@@ -413,6 +451,7 @@ void do_item_update(item *it) {
     }
 }
 
+// 调用do_item_unlink()解除原有it的连接，再调用do_item_link()连接到新的new_it  
 int do_item_replace(item *it, item *new_it, const uint32_t hv) {
     MEMCACHED_ITEM_REPLACE(ITEM_key(it), it->nkey, it->nbytes,
                            ITEM_key(new_it), new_it->nkey, new_it->nbytes);
@@ -581,7 +620,10 @@ void do_item_stats_sizes(ADD_STAT add_stats, void *c) {
 /** wrapper around assoc_find which does the lazy expiration logic */
 item *do_item_get(const char *key, const size_t nkey, const uint32_t hv) {
     //mutex_lock(&cache_lock);
+
+	//find 
     item *it = assoc_find(key, nkey, hv);
+	//增加计数
     if (it != NULL) {
         refcount_incr(&it->refcount);
         /* Optimization for slab reassignment. prevents popular items from
@@ -597,6 +639,7 @@ item *do_item_get(const char *key, const size_t nkey, const uint32_t hv) {
     //mutex_unlock(&cache_lock);
     int was_found = 0;
 
+	//打印
     if (settings.verbose > 2) {
         int ii;
         if (it == NULL) {
@@ -611,6 +654,7 @@ item *do_item_get(const char *key, const size_t nkey, const uint32_t hv) {
     }
 
     if (it != NULL) {
+		//超时了
         if (settings.oldest_live != 0 && settings.oldest_live <= current_time &&
             it->time <= settings.oldest_live) {
             do_item_unlink(it, hv);
