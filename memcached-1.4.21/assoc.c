@@ -268,7 +268,7 @@ static void *assoc_maintenance_thread(void *arg) {
         if (!expanding) {
             /* finished expanding. tell all threads to use fine-grained locks */
             switch_item_lock_type(ITEM_LOCK_GRANULAR);
-			//slab move ÔÝÍ£
+			//slab move resume »Ö¸´
             slabs_rebalancer_resume();
             /* We are done expanding.. just wait for next invocation */
             mutex_lock(&cache_lock);
