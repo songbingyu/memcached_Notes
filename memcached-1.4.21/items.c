@@ -719,8 +719,10 @@ void do_item_flush_expired(void) {
     }
 }
 
+//放到
 static void crawler_link_q(item *it) { /* item is the new tail */
     item **head, **tail;
+	//assert
     assert(it->slabs_clsid < LARGEST_ID);
     assert(it->it_flags == 1);
     assert(it->nbytes == 0);
@@ -730,6 +732,7 @@ static void crawler_link_q(item *it) { /* item is the new tail */
     assert(*tail != 0);
     assert(it != *tail);
     assert((*head && *tail) || (*head == 0 && *tail == 0));
+	//把item放到tail
     it->prev = *tail;
     it->next = 0;
     if (it->prev) {
@@ -741,6 +744,7 @@ static void crawler_link_q(item *it) { /* item is the new tail */
     return;
 }
 
+//del item  
 static void crawler_unlink_q(item *it) {
     item **head, **tail;
     assert(it->slabs_clsid < LARGEST_ID);
@@ -822,7 +826,13 @@ static item *crawler_crawl_q(item *it) {
 
 /* I pulled this out to make the main thread clearer, but it reaches into the
  * main thread's values too much. Should rethink again.
+ 上面这句注释作者是说，他把用爬虫处理过期的item的工作放到另一个专门的线程里去做
+ 是为了让主线程干净一点，但是这线程的工作涉及到太多主线程的东西了，得重新想想..
+ 这个函数的作用是“评估”一下这个item是否应该free掉。其实主要就是看下有没有过期啦~
+ 当然用户设置的settings.oldest_live参数也加入到考虑中
  */
+// http://calix.lofter.com/post/81ab9_294124c
+
 static void item_crawler_evaluate(item *search, uint32_t hv, int i) {
     rel_time_t oldest_live = settings.oldest_live;
     if ((search->exptime != 0 && search->exptime < current_time)
@@ -924,6 +934,7 @@ static void *item_crawler_thread(void *arg) {
 
 static pthread_t item_crawler_tid;
 
+//停止爬虫线程
 int stop_item_crawler_thread(void) {
     int ret;
     pthread_mutex_lock(&lru_crawler_lock);
@@ -938,6 +949,7 @@ int stop_item_crawler_thread(void) {
     return 0;
 }
 
+//开始爬虫线程
 int start_item_crawler_thread(void) {
     int ret;
 
