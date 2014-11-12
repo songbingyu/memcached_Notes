@@ -41,10 +41,12 @@
 
 #include "memcached.h"
 
+//已dameon 方式运行
 int daemonize(int nochdir, int noclose)
 {
     int fd;
 
+	// fork 
     switch (fork()) {
     case -1:
         return (-1);
@@ -54,9 +56,10 @@ int daemonize(int nochdir, int noclose)
         _exit(EXIT_SUCCESS);
     }
 
+	//创建新的session
     if (setsid() == -1)
         return (-1);
-
+	// 移动目录
     if (nochdir == 0) {
         if(chdir("/") != 0) {
             perror("chdir");
@@ -64,6 +67,7 @@ int daemonize(int nochdir, int noclose)
         }
     }
 
+	//已标准输入输出定位到 //dev/null
     if (noclose == 0 && (fd = open("/dev/null", O_RDWR, 0)) != -1) {
         if(dup2(fd, STDIN_FILENO) < 0) {
             perror("dup2 stdin");
