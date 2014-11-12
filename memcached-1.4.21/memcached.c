@@ -5064,6 +5064,7 @@ static int enable_large_pages(void) {
  * Do basic sanity check of the runtime environment
  * @return true if no errors found, false if we can't use this env
  */
+//libevent 版本检查
 static bool sanitycheck(void) {
     /* One of our biggest problems is old and bogus libevents */
     const char *ever = event_get_version();
@@ -5565,7 +5566,7 @@ int main (int argc, char **argv) {
         }
     }
 
-	//最大连接描述符http://blog.csdn.net/turkeyzhou/article/details/16847619
+	//最大连接描述符 http://blog.csdn.net/turkeyzhou/article/details/16847619
     /*
      * If needed, increase rlimits to allow as many connections
      * as needed.
