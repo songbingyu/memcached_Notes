@@ -37,6 +37,7 @@ cache_t* cache_create(const char *name, size_t bufsize, size_t align,
     ret->destructor = destructor;
 
 #ifndef NDEBUG
+	//debug模式下，在原内存前后添加两个uint64，来做错误检测，叫做“红色警戒区”
     ret->bufsize = bufsize + 2 * sizeof(redzone_pattern);
 #else
     ret->bufsize = bufsize;
@@ -44,7 +45,7 @@ cache_t* cache_create(const char *name, size_t bufsize, size_t align,
 
     return ret;
 }
-
+//http://www.cnblogs.com/matrix-nero/archive/2012/08/25/2656653.html
 static inline void* get_object(void *ptr) {
 #ifndef NDEBUG
     uint64_t *pre = ptr;
