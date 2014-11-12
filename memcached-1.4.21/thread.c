@@ -365,6 +365,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
     }
 
 	//创建线程的后缀cache http://blog.chinaunix.net/uid-28345378-id-4237880.html 
+	//https://www.google.com/search?q=umem_cache_create&oq=umem_cache_create&aqs=chrome..69i57.263j0j7&sourceid=chrome&es_sm=93&ie=UTF-8
 	//TODO:
     me->suffix_cache = cache_create("suffix", SUFFIX_SIZE, sizeof(char*),
                                     NULL, NULL);
