@@ -99,6 +99,7 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc) {
 
 	//POWER_SMALLEST def 1
     int i = POWER_SMALLEST - 1;
+	//chunk_size 是最小分配空间，def 48
     unsigned int size = sizeof(item) + settings.chunk_size;
 
     mem_limit = limit;
@@ -481,6 +482,7 @@ void slabs_stats(ADD_STAT add_stats, void *c) {
     pthread_mutex_unlock(&slabs_lock);
 }
 
+//改变已请求大小
 void slabs_adjust_mem_requested(unsigned int id, size_t old, size_t ntotal)
 {
     pthread_mutex_lock(&slabs_lock);
@@ -572,9 +574,7 @@ enum move_status {
  * threads. instead, note we found a busy one and bail. logic in do_item_get
  * will prevent busy items from continuing to be busy
  */
-
-
-
+//开始 move
 static int slab_rebalance_move(void) {
     slabclass_t *s_cls;
     int x;
@@ -670,7 +670,7 @@ static int slab_rebalance_move(void) {
 
     return was_busy;
 }
-
+//迁移完成，开始扫外工作
 static void slab_rebalance_finish(void) {
     slabclass_t *s_cls;
     slabclass_t *d_cls;
@@ -737,7 +737,6 @@ static void slab_rebalance_finish(void) {
 	来重新分配给空间不够用的slab-class，dest的选定过程是每轮通过选择排序选择出的分配次数失败
 	最多的slab-class，如果连续3次都是这个class，那么则选定他就是这个dest
 
-
 */
 static int slab_automove_decision(int *src, int *dst) {
     //static的成员变量，记录上次的分配失败统计信息，一个slab-class一个元素
@@ -767,7 +766,8 @@ static int slab_automove_decision(int *src, int *dst) {
 
     item_stats_evictions(evicted_new);//把新的每个slab分配失败的统计信息赋给 evicted_new
 	pthread_mutex_lock(&cache_lock); //得到控制slab分配的锁
-    for (i = POWER_SMALLEST; i < power_largest; i++) {
+    //每个slabclass slab 个数
+	for (i = POWER_SMALLEST; i < power_largest; i++) {
         total_pages[i] = slabclass[i].slabs;
     }
     pthread_mutex_unlock(&cache_lock);
@@ -839,16 +839,18 @@ static void *slab_maintenance_thread(void *arg) {
  */
 //slab_rebalance_thread线程为SLAB页移动线程。将src 
 //slabclass中的第一页移动到dest slabclass中，为最后一页。过程如下：
-//1.        slab_rebalance_start：赋值 slab_rebal全局变量，
-//将page页的起止位置、结束位置、src slabclass id、dest slabclass id
-//赋值给全局变量 slab_rebal，用于后期处理；
-//并检查dest slabclass的page页链表是否空间充足，如果空间不足则扩展空间为原来的两倍大小。
 
-//2.        slab_rebalance_move：将 slab_rebal指向的 page页中
-//chunk存储的所有item从hashtable中删除，并将其从原slabclass的head，tail链表中删除，并从回收链表中删除。
+//1.slab_rebalance_start：赋值 slab_rebal全局变量，
+//	将page页的起止位置、结束位置、src slabclass id、dest slabclass id
+//	赋值给全局变量 slab_rebal，用于后期处理；
+//	并检查dest slabclass的page页链表是否空间充足，如果空间不足则扩展空间为原来的两倍大小。
 
-//3.        slab_rebalance_finish：重置slab_rebal全局变量，
-//并初始化page为0，并将page分成chunk添加到dest slabclass的slots链表中。
+//2.slab_rebalance_move：将 slab_rebal指向的 page页中
+//	chunk存储的所有item从hashtable中删除，并将其从原slabclass的head，
+//	tail链表中删除，并从回收链表中删除。
+
+//3.slab_rebalance_finish：重置slab_rebal全局变量，
+//	并初始化page为0，并将page分成chunk添加到dest slabclass的slots链表中。
 
 static void *slab_rebalance_thread(void *arg) {
     int was_busy = 0;
@@ -891,9 +893,9 @@ static void *slab_rebalance_thread(void *arg) {
 //当内存不足，无法分配新的item时，发生LRU后，进行slab页转移，转移到当前页。
 //src slabclass选取规则为随机选取，选取规则如下：
 //1. 第一次LRU时，从slabclass1开始向后查找（查找范围为所有页数的上半部分）
-//一个有2个slab page以上的slabclass作为src slabclass。
+//	 一个有2个slab page以上的slabclass作为src slabclass。
 //2. 第二次发生LRU后，会从上一次选取的class之后进行查找
-//（查找范围为当前class到最大slabclass数量的上半部分）合适的class进作为src slabclass。
+//	（查找范围为当前class到最大slabclass数量的上半部分）合适的class进作为src slabclass。
 
 static int slabs_reassign_pick_any(int dst) {
     static int cur = POWER_SMALLEST - 1;
@@ -952,11 +954,13 @@ enum reassign_result_type slabs_reassign(int src, int dst) {
     return ret;
 }
 
+//暂停
 /* If we hold this lock, rebalancer can't wake up or move */
 void slabs_rebalancer_pause(void) {
     pthread_mutex_lock(&slabs_rebalance_lock);
 }
 
+//恢复
 void slabs_rebalancer_resume(void) {
     pthread_mutex_unlock(&slabs_rebalance_lock);
 }
@@ -964,6 +968,7 @@ void slabs_rebalancer_resume(void) {
 static pthread_t maintenance_tid;
 static pthread_t rebalance_tid;
 
+//slab move线程
 int start_slab_maintenance_thread(void) {
     int ret;
     slab_rebalance_signal = 0;
