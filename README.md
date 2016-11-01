@@ -1,8 +1,9 @@
-memcached_Notes
+## memcached_Notes
 ===============
 
-memcached  1.4.21 中文注释
+ 本项目是 memcached 1.4.21 的中文注释， 源码来自于[https://github.com/memcached/memcached](https://github.com/memcached/memcached)
 
-后面会写一系列文章来说明，这里面也会不断完善，祝大家玩的愉快。
-
-我的博客 ： http://www.cnblogs.com/songbingyu/
+ 本注释是我在学习memcached 的过程中制作的。
+ 
+ 希望这份注释能给大家带来帮助。
+ 
